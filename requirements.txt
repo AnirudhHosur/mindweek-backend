@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+sqlmodel
+chromadb
+python-dotenv
+google-genai
