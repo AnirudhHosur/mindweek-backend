@@ -1,5 +1,5 @@
 import json
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 import logging
 from google.genai import types
@@ -43,43 +43,76 @@ def generate_plan_text(prompt: str) -> str:
     return response.text
 
 
-def build_planner_prompt(task_payload: List[Dict[str, Any]], focus_category: Optional[str] = None) -> str:
-    """Build the planner prompt from a normalized task payload.
-
-    If focus_category is provided (e.g. "finance"), the planner is asked to
-    prioritize tasks with that category, but it is still allowed to schedule
-    other tasks if there is time. This is a *soft* guide, not a hard filter.
-    """
-    focus_rules = ""
-    if focus_category:
-        focus_rules = f"- Prioritize tasks with category: {focus_category}\n"
+def build_planner_prompt(task_payload: list[dict], focus_category: str | None = None) -> str:
+    focus_line = (
+        f"- Prefer tasks in the '{focus_category}' category when choosing what to schedule.\n"
+        if focus_category
+        else ""
+    )
 
     return f"""
-You are a weekly planning assistant.
+You are an AI weekly planning assistant.
 
-Rules:
-- Each task may appear AT MOST once
-- Do NOT invent new tasks
-- High priority tasks earlier in the week
-- Respect estimated_minutes
-- Max 8 hours of work per day
-{focus_rules}
+You receive a list of tasks as JSON. Each task has:
+- title (string)
+- category (string)
+- priority (\"high\" | \"medium\" | \"low\")
+- estimated_minutes (integer, duration of the task)
 
-Tasks (JSON):
+Your goal is to assign these tasks to days in a 7-day week.
+
+Hard rules:
+- Each task from the input may appear AT MOST once in the plan.
+- Do NOT invent new tasks or new fields.
+- Do NOT invent extra days (only Monday–Sunday).
+- Respect estimated_minutes for each task.
+- Try to schedule higher-priority tasks earlier in the week.
+- Total scheduled work per day should be at most ~8 hours (480 minutes).
+- It's okay if some tasks remain unscheduled if time runs out.
+
+Soft rules:
+- Spread tasks reasonably across the week.
+- Mix different categories where it makes sense (not all tasks on one day).
+{focus_line}\
+Input tasks (JSON array):
 {json.dumps(task_payload, indent=2)}
 
-Return JSON only in this format:
+Output format:
+Return a single JSON object with EXACTLY these 7 keys:
+- "Monday"
+- "Tuesday"
+- "Wednesday"
+- "Thursday"
+- "Friday"
+- "Saturday"
+- "Sunday"
+
+Each value MUST be an array (list) of task objects for that day.
+Each task object MUST have exactly:
+- "title": string  (must match one of the input task titles)
+- "minutes": integer  (the scheduled duration for that task on that day)
+
+Example of the structure (this is just a structural example, NOT the actual plan):
 {{
-  "Monday": [{{"title": "...", "minutes": 60}}],
+  "Monday": [
+    {{ "title": "Apply for 3 jobs", "minutes": 90 }},
+    {{ "title": "Go to the gym", "minutes": 60 }}
+  ],
   "Tuesday": [],
-  "Wednesday": [],
+  "Wednesday": [
+    {{ "title": "Deep clean apartment", "minutes": 120 }}
+  ],
   "Thursday": [],
   "Friday": [],
   "Saturday": [],
   "Sunday": []
 }}
-"""
 
+Important:
+- Follow this structure for ALL days (Monday through Sunday).
+- Every day must be present in the output JSON, even if the array is empty.
+- Do not wrap the JSON in markdown fences or add any explanation.
+"""
 
 def validate_plan(plan: Dict[str, Any], tasks: List[Dict[str, Any]]) -> List[str]:
     """

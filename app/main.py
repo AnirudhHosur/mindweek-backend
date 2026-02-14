@@ -94,6 +94,7 @@ def create_brain_dump(
             user_id=payload.user_id,
             title=t["title"],
             embedding=emb,
+            category=t["category"],
         )
 
     session.commit()
@@ -130,11 +131,7 @@ def generate_weekly_plan(
 
     else:  # PlanMode.semantic_top_k
         # Use semantic search to get top-k most relevant tasks for this user
-        planning_query = (
-            f"{req.category} tasks for this week"
-            if req.category
-            else "all my tasks and to-dos for this week"
-        )
+        planning_query = req.category or "tasks"
         logger.info("Mode=semantic_top_k → using semantic query: '%s'", planning_query)
         query_embedding = embed_planning_query(planning_query)
 
@@ -142,6 +139,7 @@ def generate_weekly_plan(
             user_id=req.user_id,
             query_embedding=query_embedding,
             k=req.k or 10,
+            category=req.category,
         )
         logger.info(
             "Mode=semantic_top_k → retrieved %d task IDs from vector DB for user_id=%s",
