@@ -78,7 +78,7 @@ Submit a brain dump containing unstructured thoughts. The system will:
 - Categorize tasks with priority and estimated time
 - Store tasks in both SQL and vector databases
 
-**Request Body:**
+#### Request Body:
 ```json
 {
   "user_id": "string",
@@ -86,25 +86,103 @@ Submit a brain dump containing unstructured thoughts. The system will:
 }
 ```
 
-**Response:**
-Returns the created brain dump object.
+**Schema Details:**
+- `user_id`: Unique identifier for the user submitting the brain dump
+- `content`: Free-form text containing thoughts, ideas, and tasks to be processed
+
+#### Response Body:
+```json
+{
+  "id": "string",
+  "user_id": "string",
+  "content": "string",
+  "created_at": "2023-01-01T00:00:00.000Z"
+}
+```
+
+**Schema Details:**
+- `id`: Unique identifier for the brain dump record
+- `user_id`: User identifier associated with this brain dump
+- `content`: Original content submitted
+- `created_at`: Timestamp when the brain dump was created
+
+**Functionality:**
+1. Creates a new brain dump record in the database
+2. Extracts structured tasks from the content using AI (Google Gemini)
+3. For each extracted task:
+   - Assigns a title, category, priority, and estimated minutes
+   - Generates embeddings for semantic search
+   - Stores in both SQL database and Chroma vector store
+4. Returns the created brain dump record
 
 ### POST `/generate-weekly-plan`
 
-Generate a personalized weekly plan based on user tasks. Supports different planning modes:
+Generate a personalized weekly plan based on user tasks. Supports different planning modes for flexible task scheduling.
 
-**Request Body:**
+#### Request Body:
 ```json
 {
   "user_id": "string",
   "k": 10,
-  "mode": "all",  // "all" or "semantic_top_k"
-  "category": "string"  // optional category focus
+  "mode": "all",
+  "category": "string"
 }
 ```
 
-**Response:**
-Returns the generated weekly plan with scheduled tasks.
+**Schema Details:**
+- `user_id`: Unique identifier for the user requesting the plan
+- `k`: Number of top tasks to consider when using semantic_top_k mode (optional, defaults to 10)
+- `mode`: Planning mode - either "all" (plan all tasks) or "semantic_top_k" (plan most relevant tasks)
+- `category`: Optional category focus to prioritize certain types of tasks (e.g., "work", "health")
+
+#### Response Body:
+```json
+{
+  "id": "string",
+  "user_id": "string",
+  "plan_json": "string",
+  "created_at": "2023-01-01T00:00:00.000Z"
+}
+```
+
+**Schema Details:**
+- `id`: Unique identifier for the weekly plan
+- `user_id`: User identifier associated with this plan
+- `plan_json`: JSON string containing the structured weekly plan (with tasks distributed across 7 days)
+- `created_at`: Timestamp when the plan was created
+
+**Functionality:**
+1. Based on the mode parameter:
+   - If mode="all": Retrieves all tasks for the user
+   - If mode="semantic_top_k": Uses vector embeddings to find the top-k most relevant tasks
+2. If a category is provided, applies soft-focus to prioritize tasks in that category
+3. Sends tasks to the AI planning system with constraints:
+   - Maximum 8 hours (480 minutes) per day
+   - Tasks distributed across all 7 days
+   - Higher priority tasks scheduled earlier
+   - Balanced workload across the week
+4. Runs a validation and correction loop to ensure plan quality
+5. Stores the generated plan in the database and returns it
+
+**Plan JSON Structure:**
+The `plan_json` field contains a JSON object with exactly 7 keys (Monday through Sunday), each containing an array of scheduled tasks:
+
+```json
+{
+  "Monday": [
+    {
+      "title": "Task title",
+      "minutes": 60
+    }
+  ],
+  "Tuesday": [],
+  "Wednesday": [],
+  "Thursday": [],
+  "Friday": [],
+  "Saturday": [],
+  "Sunday": []
+}
+```
 
 ## Data Models
 

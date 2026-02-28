@@ -2,10 +2,12 @@ import os
 import uuid
 import json
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 import logging
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Request, HTTPException, Body
+from jose import jwt
+import requests
 from sqlmodel import Session, select
 
 from .db import init_db, get_session
@@ -32,8 +34,33 @@ from .services.planning import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("mindweek-backend")
 
-
+# FastAPI app instance
 app = FastAPI(title="MindWeek Backend v2", version="0.2.0")
+
+CLERK_JWKS_URL = os.environ["CLERK_JWKS_URL"]
+jwks = requests.get(CLERK_JWKS_URL).json()
+
+def verify_token(token: str):
+    try:
+        unverified_header = jwt.get_unverified_header(token)
+        key = next(k for k in jwks["keys"] if k["kid"] == unverified_header["kid"])
+        payload = jwt.decode(
+            token,
+            key,
+            algorithms=["RS256"],
+            options={"verify_aud": False},
+        )
+        return payload
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+def get_current_user(request: Request):
+    auth = request.headers.get("Authorization")
+    if not auth:
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
+    token = auth.split(" ")[1]
+    payload = verify_token(token)
+    return payload["sub"]  # Clerk user_id
 
 
 @app.on_event("startup")
@@ -46,6 +73,7 @@ def on_startup():
 @app.post("/brain-dump", response_model=BrainDump)
 def create_brain_dump(
     payload: BrainDumpCreate,
+    user_id: str = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
     """Store brain dump, extract tasks, store tasks in SQL + vector DB."""
@@ -54,7 +82,7 @@ def create_brain_dump(
 
     dump = BrainDump(
         id=dump_id,
-        user_id=payload.user_id,
+        user_id=user_id,
         content=payload.content,
         created_at=now,
     )
@@ -80,7 +108,7 @@ def create_brain_dump(
     for task_id, t, emb in zip(task_ids, tasks, embeddings):
         task_row = Task(
             id=task_id,
-            user_id=payload.user_id,
+            user_id=user_id,
             title=t["title"],
             category=t["category"],
             priority=TaskPriority(t["priority"]),
@@ -91,14 +119,14 @@ def create_brain_dump(
         session.add(task_row)
         add_task_embedding(
             task_id=task_id,
-            user_id=payload.user_id,
+            user_id=user_id,
             title=t["title"],
             embedding=emb,
             category=t["category"],
         )
 
     session.commit()
-    logger.info("Stored %d tasks in SQL and Chroma for user_id=%s (dump_id=%s)", len(tasks), payload.user_id, dump_id)
+    logger.info("Stored %d tasks in SQL and Chroma for user_id=%s (dump_id=%s)", len(tasks), user_id, dump_id)
 
     return dump
 
@@ -106,17 +134,18 @@ def create_brain_dump(
 @app.post("/generate-weekly-plan", response_model=WeeklyPlanRead)
 def generate_weekly_plan(
     req: PlanRequest,
+    user_id: str = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
     """Task-aware weekly planner using SQL + vector retrieval.
 
     Modes:
-    - mode=\"all\":           plan ALL tasks for this user (no semantic top-k)
-    - mode=\"semantic_top_k\": plan only the top-k most relevant tasks
+    - mode="all":           plan ALL tasks for this user (no semantic top-k)
+    - mode="semantic_top_k": plan only the top-k most relevant tasks
     """
     logger.info(
         "Generating weekly plan for user_id=%s (mode=%s, k=%s, focus_category=%s)",
-        req.user_id,
+        user_id,
         req.mode.value,
         req.k,
         req.category,
@@ -125,7 +154,7 @@ def generate_weekly_plan(
     # 1) Select candidate tasks
     if req.mode == PlanMode.all:
         # Plan ALL tasks for this user (optionally soft-focus in the prompt via category)
-        query = select(Task).where(Task.user_id == req.user_id)
+        query = select(Task).where(Task.user_id == user_id)
         tasks = session.exec(query).all()
         logger.info("Mode=all → selected %d tasks for planning", len(tasks))
 
@@ -136,7 +165,7 @@ def generate_weekly_plan(
         query_embedding = embed_planning_query(planning_query)
 
         task_ids = query_task_ids(
-            user_id=req.user_id,
+            user_id=user_id,
             query_embedding=query_embedding,
             k=req.k or 10,
             category=req.category,
@@ -144,14 +173,14 @@ def generate_weekly_plan(
         logger.info(
             "Mode=semantic_top_k → retrieved %d task IDs from vector DB for user_id=%s",
             len(task_ids),
-            req.user_id,
+            user_id,
         )
 
         if not task_ids:
-            logger.info("No tasks found for user_id=%s in semantic_top_k mode", req.user_id)
+            logger.info("No tasks found for user_id=%s in semantic_top_k mode", user_id)
             empty_plan = WeeklyPlan(
                 id=str(uuid.uuid4()),
-                user_id=req.user_id,
+                user_id=user_id,
                 plan_json="{}",
                 created_at=datetime.utcnow(),
             )
@@ -168,10 +197,10 @@ def generate_weekly_plan(
         )
 
     if not tasks:
-        logger.info("No tasks available for planning for user_id=%s", req.user_id)
+        logger.info("No tasks available for planning for user_id=%s", user_id)
         empty_plan = WeeklyPlan(
             id=str(uuid.uuid4()),
-            user_id=req.user_id,
+            user_id=user_id,
             plan_json="{}",
             created_at=datetime.utcnow(),
         )
@@ -256,7 +285,7 @@ Return corrected JSON only.
 
     # 7) Store plan
     plan_id = str(uuid.uuid4())
-    logger.info("Storing weekly plan (plan_id=%s) for user_id=%s", plan_id[:8], req.user_id)
+    logger.info("Storing weekly plan (plan_id=%s) for user_id=%s", plan_id[:8], user_id)
     
     # Log plan summary
     try:
@@ -269,7 +298,7 @@ Return corrected JSON only.
     
     plan = WeeklyPlan(
         id=plan_id,
-        user_id=req.user_id,
+        user_id=user_id,
         plan_json=plan_json,
         created_at=datetime.utcnow(),
     )
@@ -280,3 +309,44 @@ Return corrected JSON only.
     logger.info("Weekly plan stored successfully (plan_id=%s)", plan_id[:8])
 
     return plan
+
+
+@app.get("/tasks", response_model=List[Task])
+def get_tasks(
+    source_dump_id: Optional[str] = None,
+    user_id: str = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """Get all tasks for the authenticated user, optionally filtered by brain dump."""
+    query = select(Task).where(Task.user_id == user_id)
+    if source_dump_id:
+        query = query.where(Task.source_dump_id == source_dump_id)
+    tasks = session.exec(query).all()
+    return tasks
+
+@app.put("/tasks/{task_id}", response_model=Task)
+def update_task(
+    task_id: str,
+    user_id: str = Depends(get_current_user),
+    session: Session = Depends(get_session),
+    title: Optional[str] = Body(None),
+    category: Optional[str] = Body(None),
+    priority: Optional[str] = Body(None),
+    estimated_minutes: Optional[int] = Body(None),
+):
+    """Update a task for the authenticated user."""
+    task = session.get(Task, task_id)
+    if not task or task.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if title is not None:
+        task.title = title
+    if category is not None:
+        task.category = category
+    if priority is not None:
+        task.priority = TaskPriority(priority)
+    if estimated_minutes is not None:
+        task.estimated_minutes = estimated_minutes
+    session.add(task)
+    session.commit()
+    session.refresh(task)
+    return task

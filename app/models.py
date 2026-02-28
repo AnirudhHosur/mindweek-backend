@@ -49,8 +49,9 @@ class Task(SQLModel, table=True):
 # API SCHEMAS
 # ======================
 
-class BrainDumpCreate(SQLModel):
-    user_id: str
+from pydantic import BaseModel
+
+class BrainDumpCreate(BaseModel):
     content: str
 
 
@@ -61,8 +62,7 @@ class PlanMode(str, Enum):
     semantic_top_k = "semantic_top_k"  # plan only top-k most relevant tasks
 
 
-class PlanRequest(SQLModel):
-    user_id: str
+class PlanRequest(BaseModel):
     # How many tasks to consider when using semantic_top_k mode.
     # Ignored when mode == PlanMode.all (we plan all tasks for the user).
     k: Optional[int] = 10

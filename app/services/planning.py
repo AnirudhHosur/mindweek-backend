@@ -71,7 +71,10 @@ Hard rules:
 - It's okay if some tasks remain unscheduled if time runs out.
 
 Soft rules:
-- Spread tasks reasonably across the week.
+- You MUST distribute tasks across ALL 7 days (Monday–Sunday).
+- Avoid concentrating tasks in only a few days.
+- Even if total workload is small, ensure every day has at least 1 task when possible.
+- Prefer balanced workload across the week instead of finishing early.
 - Mix different categories where it makes sense (not all tasks on one day).
 {focus_line}\
 Input tasks (JSON array):
