@@ -310,7 +310,6 @@ Return corrected JSON only.
 
     return plan
 
-
 @app.get("/tasks", response_model=List[Task])
 def get_tasks(
     source_dump_id: Optional[str] = None,
@@ -350,3 +349,15 @@ def update_task(
     session.commit()
     session.refresh(task)
     return task
+
+@app.get("/weekly-plan", response_model=WeeklyPlanRead)
+def get_weekly_plan(
+    user_id: str = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """Get the latest generated weekly plan for the authenticated user."""
+    query = select(WeeklyPlan).where(WeeklyPlan.user_id == user_id).order_by(WeeklyPlan.created_at.desc())
+    plan = session.exec(query).first()
+    if not plan:
+        raise HTTPException(status_code=404, detail="No weekly plan found")
+    return plan

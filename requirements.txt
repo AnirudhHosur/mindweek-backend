@@ -4,4 +4,5 @@ sqlmodel
 chromadb
 python-dotenv
 google-genai
-python-jose requests
+python-jose
+requests

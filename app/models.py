@@ -77,3 +77,10 @@ class WeeklyPlanRead(SQLModel):
     user_id: str
     plan_json: str
     created_at: datetime
+
+
+class WeeklyPlanWithTimeSlots(SQLModel):
+    id: str
+    user_id: str
+    plan_json: str
+    created_at: datetime
